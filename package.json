@@ -1,5 +1,5 @@
 {
-  "name": "digital-seba-public-intelligence-monitor",
+  "name": "bangladesh-identity-verification",
   "version": "1.0.0",
   "private": true,
   "engines": {
@@ -9,13 +9,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "db:init": "node scripts/init-db.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "cheerio": "^1.1.2",
     "next": "16.3.3",
-    "postgres": "^3.4.7",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
