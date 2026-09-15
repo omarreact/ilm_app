@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Digital Seba Public Intelligence Monitor
 
-## Getting Started
+Production-oriented public-source monitoring dashboard for researched Bangladesh digital service portals.
 
-First, run the development server:
+## Safety model
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Static registry only; no arbitrary URL scanning.
+- Public `GET` requests only.
+- No login automation or credential submission.
+- No NID, phone, DOB, payment-reference, or other personal-data submission.
+- Redirects are revalidated against the hostname allowlist.
+- DNS targets resolving to private/reserved IP ranges are blocked.
+- Response size and timeout limits are enforced.
+- Raw HTML is not stored.
+- Website claims are shown separately from corroborated research.
+
+## Stack
+
+Next.js 16.3.3, React 19, TypeScript, optional PostgreSQL persistence via `postgres`, and Cheerio for public HTML parsing.
+
+## Production mode
+
+The app works immediately in stateless mode. For persistent history and scheduled scans, configure:
+
+```env
+DATABASE_URL=postgresql://...
+CRON_SECRET=<long-random-secret>
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then run `npm run db:init` once against the database.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Optional scan controls:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+SCAN_MIN_INTERVAL_SECONDS=900
+SCAN_TIMEOUT_MS=12000
+SCAN_MAX_BYTES=1500000
+SCAN_MAX_REDIRECTS=5
+```
 
-## Learn More
+## Endpoints
 
-To learn more about Next.js, take a look at the following resources:
+- `GET /api/health`
+- `GET /api/portals`
+- `POST /api/scan` with `{ "id": "nidmaker" }`
+- `GET /api/export`
+- `GET /api/cron/scan` protected by `CRON_SECRET`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Interpretation
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A network failure is not proof that a site is offline. Likewise, a site advertising a sensitive capability does not prove that the capability works or that the operator has authorized access to any government system.
