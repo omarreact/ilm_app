@@ -1,320 +1,276 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Latest = {
+type Kind = "nid" | "birth";
+
+type Health = {
+  ok: boolean;
+  porichoyConfigured: boolean;
+  mode: "ready" | "setup-required";
+};
+
+type VerificationResponse = {
+  ok: boolean;
+  type: Kind;
+  maskedIdentifier: string;
+  source: string;
   checkedAt: string;
-  category: string;
-  status: number | null;
-  finalUrl: string | null;
-  title: string | null;
-  metaDescription: string | null;
-  services: string[];
-  channels: string[];
-  payments: string[];
-  loginDetected: boolean | null;
-  registerDetected: boolean | null;
-  highRiskHits: string[];
-  changed: boolean;
-  latencyMs: number | null;
-  error: string | null;
+  result: unknown;
 };
 
-type Portal = {
-  id: string;
-  domain: string;
-  url: string | null;
-  risk: "low" | "unverified" | "elevated" | "high";
-  research: {
-    type?: string;
-    summary?: string;
-    claims?: string[];
-    channels?: string[];
-    payments?: string[];
-    relations?: string[];
-    highRiskIndicators?: string[];
-    sources?: string[];
+const OFFICIAL_NID = "https://services.nidw.gov.bd/nid-pub/";
+const OFFICIAL_BIRTH = "https://everify.bdris.gov.bd/";
+
+function labelFor(key: string) {
+  const map: Record<string, string> = {
+    name: "নাম",
+    nameBangla: "নাম (বাংলা)",
+    nameEnglish: "নাম (ইংরেজি)",
+    fullName: "পূর্ণ নাম",
+    dateOfBirth: "জন্ম তারিখ",
+    dob: "জন্ম তারিখ",
+    gender: "লিঙ্গ",
+    fatherName: "পিতার নাম",
+    motherName: "মাতার নাম",
+    spouseName: "স্বামী/স্ত্রীর নাম",
+    nationality: "জাতীয়তা",
+    status: "স্ট্যাটাস",
+    verified: "যাচাইকৃত",
+    message: "বার্তা"
   };
-  latest: Latest | null;
-};
-
-function badgeClass(value: string) {
-  if (value === "high") return "badge high";
-  if (value === "elevated") return "badge elevated";
-  if (value === "low") return "badge low";
-  return "badge neutral";
+  if (map[key]) return map[key];
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/^./, (s) => s.toUpperCase());
 }
 
-function statusClass(category?: string) {
-  if (category === "live") return "badge low";
-  if (category === "http_error") return "badge elevated";
-  if (category === "unresolved") return "badge neutral";
-  if (category) return "badge high";
-  return "badge neutral";
+function flatten(value: unknown, prefix = ""): Array<[string, string]> {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => flatten(item, `${prefix}${prefix ? "." : ""}${index + 1}`));
+  }
+  if (typeof value !== "object") return [[prefix || "value", String(value)]];
+
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, val]) => {
+    const next = prefix ? `${prefix}.${key}` : key;
+    if (val !== null && typeof val === "object") return flatten(val, next);
+    return [[next, val === null || val === undefined ? "—" : String(val)] as [string, string]];
+  });
 }
 
 export default function Home() {
-  const [portals, setPortals] = useState<Portal[]>([]);
-  const [search, setSearch] = useState("");
-  const [risk, setRisk] = useState("");
-  const [selected, setSelected] = useState<Portal | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState<Set<string>>(new Set());
-  const [message, setMessage] = useState("");
+  const [kind, setKind] = useState<Kind>("nid");
+  const [nid, setNid] = useState("");
+  const [brn, setBrn] = useState("");
+  const [dob, setDob] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [response, setResponse] = useState<VerificationResponse | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
 
-  async function load() {
+  useEffect(() => {
+    fetch("/api/health", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => setHealth(json))
+      .catch(() => setHealth(null));
+  }, []);
+
+  useEffect(() => {
+    setError("");
+    setResponse(null);
+    setConsent(false);
+  }, [kind]);
+
+  const rows = useMemo(() => (response ? flatten(response.result) : []), [response]);
+  const configured = health?.porichoyConfigured === true;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setResponse(null);
+
+    if (!consent) {
+      setError("যাচাই করার আইনগত অনুমতি/সম্মতি নিশ্চিত করুন।");
+      return;
+    }
+
     setLoading(true);
-    setMessage("");
     try {
-      const res = await fetch("/api/portals", { cache: "no-store" });
+      const body = kind === "nid"
+        ? { nidNumber: nid.trim(), dateOfBirth: dob, consent: true }
+        : { birthRegistrationNumber: brn.trim(), dateOfBirth: dob, consent: true };
+
+      const res = await fetch(`/api/verify/${kind}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(body)
+      });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || json.error || "Failed to load");
-      setPortals(json.portals);
-      if (selected) {
-        const next = json.portals.find((p: Portal) => p.id === selected.id);
-        if (next) setSelected(next);
-      }
-    } catch (e: any) {
-      setMessage(e.message || String(e));
+      if (!res.ok) throw new Error(json.error || json.message || "Verification failed");
+      setResponse(json);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Verification failed");
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { load(); }, []);
-
-  async function scan(id: string) {
-    setScanning(prev => new Set(prev).add(id));
-    setMessage("");
-    try {
-      const res = await fetch("/api/scan", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Scan failed");
-      const observation = json.observation as Latest;
-      setPortals(prev => prev.map(p => p.id === id ? { ...p, latest: observation } : p));
-      setSelected(prev => prev?.id === id ? { ...prev, latest: observation } : prev);
-    } catch (e: any) {
-      setMessage(e.message || String(e));
-    } finally {
-      setScanning(prev => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
-  }
-
-  async function scanAll() {
-    for (const portal of portals) {
-      await scan(portal.id);
-    }
-  }
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    return portals.filter(p => {
-      if (risk && p.risk !== risk) return false;
-      if (!q) return true;
-      return [
-        p.domain,
-        p.research.type || "",
-        p.research.summary || "",
-        ...(p.research.claims || []),
-        ...(p.latest?.services || [])
-      ].join(" ").toLowerCase().includes(q);
-    });
-  }, [portals, search, risk]);
-
-  const metrics = {
-    total: portals.length,
-    high: portals.filter(p => p.risk === "high" || p.risk === "elevated").length,
-    live: portals.filter(p => p.latest?.category === "live").length,
-    changed: portals.filter(p => p.latest?.changed).length,
-    unresolved: portals.filter(p => !p.latest || p.latest.category !== "live").length
-  };
-
   return (
-    <main>
-      <header className="topbar">
-        <div>
-          <div className="eyebrow">PUBLIC-SOURCE THREAT INTELLIGENCE</div>
-          <h1>Digital Seba Monitor</h1>
-          <p>Production server-side monitoring with evidence provenance and passive public GET only.</p>
+    <main className="shell">
+      <header className="hero">
+        <div className="brandRow">
+          <div className="mark" aria-hidden="true">✓</div>
+          <div>
+            <div className="eyebrow">BANGLADESH IDENTITY VERIFICATION</div>
+            <h1>বাংলাদেশ পরিচয় যাচাই</h1>
+          </div>
+          <span className={`statusPill ${configured ? "ready" : "setup"}`}>
+            {health === null ? "Checking API…" : configured ? "Official API ready" : "API key required"}
+          </span>
         </div>
-        <div className="topActions">
-          <a className="button secondary" href="/api/export">Export JSON</a>
-          <button className="button" onClick={scanAll} disabled={loading || scanning.size > 0}>
-            {scanning.size ? `Scanning ${scanning.size}…` : "Refresh all"}
-          </button>
-        </div>
+        <p className="heroText">
+          অনুমোদিত Porichoy integration দিয়ে জাতীয় পরিচয়পত্র ও জন্ম নিবন্ধন তথ্য যাচাই করুন।
+          আপনার দেওয়া পরিচয় তথ্য এই অ্যাপ database-এ সংরক্ষণ করা হয় না।
+        </p>
       </header>
 
-      <section className="notice">
-        <strong>Safety boundary:</strong> the scanner accepts portal IDs only, never arbitrary URLs. It does not log in, submit NID/phone/payment data, call restricted APIs, or store raw HTML.
-      </section>
+      <section className="grid">
+        <div className="card verifyCard">
+          <div className="tabs" role="tablist" aria-label="Verification type">
+            <button className={kind === "nid" ? "tab active" : "tab"} onClick={() => setKind("nid")} type="button">
+              জাতীয় পরিচয়পত্র
+              <small>NID Verification</small>
+            </button>
+            <button className={kind === "birth" ? "tab active" : "tab"} onClick={() => setKind("birth")} type="button">
+              জন্ম নিবন্ধন
+              <small>Birth Certificate</small>
+            </button>
+          </div>
 
-      {message && <section className="errorBox">{message}</section>}
+          <form onSubmit={submit} className="form">
+            {kind === "nid" ? (
+              <label>
+                <span>জাতীয় পরিচয়পত্র নম্বর</span>
+                <input
+                  value={nid}
+                  onChange={(e) => setNid(e.target.value.replace(/\D/g, "").slice(0, 17))}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="10 / 13 / 17 digit NID"
+                  minLength={10}
+                  maxLength={17}
+                  required
+                />
+                <small>শুধু নিজের বা যাচাই করার বৈধ অনুমতি আছে এমন NID ব্যবহার করুন।</small>
+              </label>
+            ) : (
+              <label>
+                <span>জন্ম নিবন্ধন নম্বর</span>
+                <input
+                  value={brn}
+                  onChange={(e) => setBrn(e.target.value.replace(/\D/g, "").slice(0, 17))}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="17 digit Birth Registration Number"
+                  minLength={17}
+                  maxLength={17}
+                  required
+                />
+                <small>BDRIS জন্ম নিবন্ধন নম্বর ১৭ অংকের হতে হবে।</small>
+              </label>
+            )}
 
-      <section className="metrics">
-        <Metric label="Portals" value={metrics.total} />
-        <Metric label="High / elevated" value={metrics.high} />
-        <Metric label="Live HTTP" value={metrics.live} />
-        <Metric label="Changed" value={metrics.changed} />
-        <Metric label="Other / pending" value={metrics.unresolved} />
-      </section>
+            <label>
+              <span>জন্ম তারিখ</span>
+              <input value={dob} onChange={(e) => setDob(e.target.value)} type="date" required />
+              <small>সরকারি রেকর্ডে থাকা জন্ম তারিখ দিন।</small>
+            </label>
 
-      <section className="panel toolbar">
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search domain, service, classification…"
-        />
-        <select value={risk} onChange={e => setRisk(e.target.value)}>
-          <option value="">All risk levels</option>
-          <option value="high">High</option>
-          <option value="elevated">Elevated</option>
-          <option value="low">Low</option>
-          <option value="unverified">Unverified</option>
-        </select>
-        <button className="button secondary" onClick={load}>Reload database</button>
-      </section>
+            <label className="consent">
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+              <span>আমি নিশ্চিত করছি যে এই পরিচয় তথ্য যাচাই করার বৈধ অনুমতি বা সংশ্লিষ্ট ব্যক্তির সম্মতি আমার আছে।</span>
+            </label>
 
-      <section className="panel tableWrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Portal</th>
-              <th>Classification</th>
-              <th>Risk</th>
-              <th>Latest observation</th>
-              <th>Public signals</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(p => (
-              <tr key={p.id} onClick={() => setSelected(p)}>
-                <td>
-                  <strong>{p.domain}</strong>
-                  <small>{p.url || "Hostname unresolved"}</small>
-                </td>
-                <td>
-                  {p.research.type || "Unclassified"}
-                  <small>{p.research.summary || "No summary"}</small>
-                </td>
-                <td><span className={badgeClass(p.risk)}>{p.risk}</span></td>
-                <td>
-                  <span className={statusClass(p.latest?.category)}>
-                    {p.latest ? `${p.latest.category}${p.latest.status ? ` · ${p.latest.status}` : ""}` : "not checked"}
-                  </span>
-                  {p.latest?.changed && <span className="badge changed">changed</span>}
-                  <small>{p.latest?.checkedAt ? new Date(p.latest.checkedAt).toLocaleString() : "—"}</small>
-                </td>
-                <td>
-                  <div className="tags">
-                    {(p.latest?.services?.length ? p.latest.services : p.research.claims || []).slice(0, 5).map(x =>
-                      <span className="tag" key={x}>{x}</span>
-                    )}
-                  </div>
-                </td>
-                <td>
-                  <button
-                    className="iconButton"
-                    disabled={scanning.has(p.id)}
-                    onClick={e => { e.stopPropagation(); scan(p.id); }}
-                    aria-label={`Scan ${p.domain}`}
-                  >
-                    {scanning.has(p.id) ? "…" : "↻"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!loading && filtered.length === 0 && <div className="empty">No matching portals.</div>}
-        {loading && <div className="empty">Loading database…</div>}
-      </section>
+            {error && <div className="errorBox" role="alert">{error}</div>}
 
-      {selected && (
-        <>
-          <div className="overlay" onClick={() => setSelected(null)} />
-          <aside className="drawer">
-            <div className="drawerHead">
-              <div>
-                <div className="eyebrow">PORTAL DETAIL</div>
-                <h2>{selected.domain}</h2>
+            {!configured && health && (
+              <div className="setupBox">
+                <strong>Porichoy production credential এখনো configured নয়।</strong>
+                <span>Vercel-এ <code>PORICHOY_API_KEY</code> যোগ করলে এই form real verification করবে।</span>
               </div>
-              <button className="iconButton" onClick={() => setSelected(null)}>×</button>
+            )}
+
+            <button className="primary" type="submit" disabled={loading || !configured}>
+              {loading ? "যাচাই হচ্ছে…" : kind === "nid" ? "NID যাচাই করুন" : "জন্ম নিবন্ধন যাচাই করুন"}
+            </button>
+          </form>
+        </div>
+
+        <aside className="card infoCard">
+          <div className="infoIcon">🔐</div>
+          <h2>Privacy-first verification</h2>
+          <p>API key শুধুমাত্র server-side environment variable-এ থাকে। Browser কখনও credential পায় না।</p>
+          <ul>
+            <li>Verification input database-এ save হয় না</li>
+            <li>Response cache করা হয় না</li>
+            <li>Photo, signature, phone, email ও address response থেকে বাদ দেওয়া হয়</li>
+            <li>NID/BRN response-এ masked আকারে দেখানো হয়</li>
+            <li>Basic abuse rate-limit enabled</li>
+          </ul>
+
+          <div className="officialLinks">
+            <a href={OFFICIAL_NID} target="_blank" rel="noopener noreferrer">
+              <strong>বাংলাদেশ নির্বাচন কমিশন NID Portal</strong>
+              <span>services.nidw.gov.bd ↗</span>
+            </a>
+            <a href={OFFICIAL_BIRTH} target="_blank" rel="noopener noreferrer">
+              <strong>Official BDRIS Birth Verification</strong>
+              <span>everify.bdris.gov.bd ↗</span>
+            </a>
+          </div>
+        </aside>
+      </section>
+
+      {response && (
+        <section className="card resultCard">
+          <div className="resultHead">
+            <div>
+              <div className="eyebrow">VERIFICATION RESULT</div>
+              <h2>যাচাইকরণ সম্পন্ন</h2>
             </div>
+            <div className="verifiedBadge">✓ Verified response</div>
+          </div>
 
-            <div className="drawerBody">
-              <div className="rowBadges">
-                <span className={badgeClass(selected.risk)}>{selected.risk}</span>
-                <span className={statusClass(selected.latest?.category)}>
-                  {selected.latest?.category || "not checked"}
-                </span>
-                {selected.latest?.changed && <span className="badge changed">changed</span>}
-              </div>
+          <div className="resultMeta">
+            <div><span>ধরন</span><strong>{response.type === "nid" ? "NID" : "Birth Registration"}</strong></div>
+            <div><span>আইডি</span><strong>{response.maskedIdentifier}</strong></div>
+            <div><span>উৎস</span><strong>{response.source}</strong></div>
+            <div><span>সময়</span><strong>{new Date(response.checkedAt).toLocaleString("bn-BD")}</strong></div>
+          </div>
 
-              <h3>Research snapshot</h3>
-              <p>{selected.research.summary || "No summary."}</p>
-              <Tags title="Claims / services" values={selected.research.claims} />
-              <Tags title="High-risk indicators" values={selected.research.highRiskIndicators} />
-              <Tags title="Support channels" values={selected.research.channels} />
-              <Tags title="Payments" values={selected.research.payments} />
-
-              <h3>Latest server observation</h3>
-              {selected.latest ? (
-                <dl className="details">
-                  <dt>Checked</dt><dd>{new Date(selected.latest.checkedAt).toLocaleString()}</dd>
-                  <dt>HTTP</dt><dd>{selected.latest.status ?? "—"}</dd>
-                  <dt>Final URL</dt><dd>{selected.latest.finalUrl || "—"}</dd>
-                  <dt>Title</dt><dd>{selected.latest.title || "—"}</dd>
-                  <dt>Latency</dt><dd>{selected.latest.latencyMs ? `${selected.latest.latencyMs} ms` : "—"}</dd>
-                  <dt>Login detected</dt><dd>{selected.latest.loginDetected === null ? "—" : String(selected.latest.loginDetected)}</dd>
-                  <dt>Register detected</dt><dd>{selected.latest.registerDetected === null ? "—" : String(selected.latest.registerDetected)}</dd>
-                  <dt>Error</dt><dd>{selected.latest.error || "—"}</dd>
-                </dl>
-              ) : <p className="muted">No production scan stored yet.</p>}
-
-              <Tags title="Live detected services" values={selected.latest?.services} />
-              <Tags title="Live public channels" values={selected.latest?.channels} />
-              <Tags title="Live payment keywords" values={selected.latest?.payments} />
-              <Tags title="Live high-risk phrase hits" values={selected.latest?.highRiskHits} />
-
-              <h3>Evidence sources</h3>
-              <div className="sources">
-                {(selected.research.sources || []).map(url => (
-                  <a key={url} href={url} target="_blank" rel="noopener noreferrer">{url}</a>
-                ))}
-              </div>
-
-              <button className="button wide" onClick={() => scan(selected.id)} disabled={scanning.has(selected.id)}>
-                {scanning.has(selected.id) ? "Scanning…" : "Scan this portal"}
-              </button>
+          {rows.length ? (
+            <div className="resultTable">
+              {rows.map(([key, value]) => (
+                <div className="resultRow" key={key}>
+                  <span>{labelFor(key.split(".").pop() || key)}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
             </div>
-          </aside>
-        </>
+          ) : (
+            <div className="emptyResult">Provider verification completed, but no displayable identity fields were returned.</div>
+          )}
+        </section>
       )}
+
+      <section className="footnote">
+        <strong>Important:</strong> এই অ্যাপ Election Commission বা BDRIS-এর বিকল্প সরকারি ওয়েবসাইট নয়।
+        NID/BRN যাচাই কেবল অনুমোদিত ব্যবহারের জন্য। Official portal-এর CAPTCHA, login বা access control bypass করা হয় না।
+      </section>
     </main>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function Tags({ title, values }: { title: string; values?: string[] }) {
-  return (
-    <div className="tagGroup">
-      <label>{title}</label>
-      <div className="tags">
-        {values?.length ? values.map(v => <span className="tag" key={v}>{v}</span>) : <span className="muted">—</span>}
-      </div>
-    </div>
   );
 }
