@@ -78,10 +78,30 @@ export default function Home() {
   const [health, setHealth] = useState<Health | null>(null);
 
   useEffect(() => {
-    fetch("/api/health", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((json) => setHealth(json))
-      .catch(() => setHealth(null));
+    let active = true;
+
+    async function refreshHealth() {
+      try {
+        const res = await fetch("/api/health", { cache: "no-store" });
+        const json = await res.json();
+        if (active) setHealth(json);
+      } catch {
+        if (active) setHealth(null);
+      }
+    }
+
+    void refreshHealth();
+    const timer = window.setInterval(() => void refreshHealth(), 30_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshHealth();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {
