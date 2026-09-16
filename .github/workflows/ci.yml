@@ -8,11 +8,21 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      PORICHOY_API_KEY: ${{ secrets.PORICHOY_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Check Porichoy secret availability
+        shell: bash
+        run: |
+          if [ -z "$PORICHOY_API_KEY" ]; then
+            echo "::notice::PORICHOY_API_KEY GitHub Actions secret is not configured."
+          else
+            echo "PORICHOY_API_KEY is configured for this workflow."
+          fi
       - run: npm install
       - run: npm run typecheck
       - run: npm run build
