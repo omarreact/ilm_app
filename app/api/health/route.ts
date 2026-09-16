@@ -1,24 +1,23 @@
 import { NextResponse } from "next/server";
-import { healthCheck } from "@/lib/db";
+import { porichoyConfigured } from "@/lib/porichoy";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const database = await healthCheck();
-    return NextResponse.json({
+  const configured = porichoyConfigured();
+  return NextResponse.json(
+    {
       ok: true,
-      database,
-      mode: database ? "persistent" : "stateless",
+      porichoyConfigured: configured,
+      mode: configured ? "ready" : "setup-required",
+      provider: "Porichoy",
       time: new Date().toISOString()
-    });
-  } catch (error: any) {
-    return NextResponse.json({
-      ok: true,
-      database: false,
-      mode: "stateless",
-      time: new Date().toISOString(),
-      warning: error?.message || String(error)
-    });
-  }
+    },
+    {
+      headers: {
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache"
+      }
+    }
+  );
 }
