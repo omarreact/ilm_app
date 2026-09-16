@@ -1,4 +1,6 @@
-const PORICHOY_BASE_URL = "https://api.porichoybd.com";
+const DEFAULT_PORICHOY_BASE_URL = "https://api.porichoybd.com";
+const DEFAULT_NID_PATH = "/api/v2/verifications/autofill";
+const DEFAULT_BIRTH_PATH = "/api/v1/verifications/autofill";
 
 export class PorichoyError extends Error {
   status: number;
@@ -14,6 +16,32 @@ export class PorichoyError extends Error {
 
 type RateEntry = { count: number; resetAt: number };
 const rateBuckets = new Map<string, RateEntry>();
+
+function envValue(name: string, fallback: string) {
+  const value = process.env[name]?.trim();
+  return value || fallback;
+}
+
+function porichoyBaseUrl() {
+  const raw = envValue("PORICHOY_BASE_URL", DEFAULT_PORICHOY_BASE_URL).replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new PorichoyError("Verification provider URL is invalid.", 503, "PORICHOY_BAD_CONFIG");
+  }
+
+  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new PorichoyError("Verification provider must use HTTPS.", 503, "PORICHOY_BAD_CONFIG");
+  }
+
+  return url.toString().replace(/\/$/, "");
+}
+
+function porichoyPath(name: "PORICHOY_NID_PATH" | "PORICHOY_BIRTH_PATH", fallback: string) {
+  const value = envValue(name, fallback);
+  return value.startsWith("/") ? value : `/${value}`;
+}
 
 export function porichoyConfigured() {
   return Boolean(process.env.PORICHOY_API_KEY?.trim());
@@ -55,13 +83,12 @@ export function checkRateLimit(key: string) {
   return { allowed: true, remaining: Math.max(0, limit - existing.count), retryAfterSeconds: 0 };
 }
 
-const OMIT_KEY = /(photo|image|signature|finger|phone|mobile|email|address|token|api.?key|secret|password|face|biometric)/i;
+const OMIT_KEY = /(photo|image|signature|finger|phone|mobile|email|address|token|api.?key|secret|password|face|biometric|blood|spouse|parent|voter|permanent|present)/i;
 const IDENTIFIER_KEY = /(nid|national.?id|birth.?registration|birth.?reg|brn)/i;
 
 function sanitize(value: unknown, key = "", depth = 0): unknown {
   if (depth > 5) return undefined;
   if (value === null || value === undefined) return value;
-
   if (key && OMIT_KEY.test(key)) return undefined;
 
   if (typeof value === "string") {
@@ -94,6 +121,46 @@ function sanitize(value: unknown, key = "", depth = 0): unknown {
   return undefined;
 }
 
+function safeNetworkCode(error: unknown) {
+  if (!(error instanceof Error)) return "UNKNOWN";
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (cause && typeof cause === "object") {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Z0-9_]+$/.test(code)) return code;
+  }
+  return error.name || "ERROR";
+}
+
+export async function probePorichoyProvider() {
+  const baseUrl = porichoyBaseUrl();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const response = await fetch(baseUrl, {
+      method: "HEAD",
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal
+    });
+
+    return {
+      reachable: true,
+      status: response.status,
+      state: response.status >= 500 ? "degraded" : "reachable"
+    } as const;
+  } catch (error: unknown) {
+    return {
+      reachable: false,
+      status: null,
+      state: "unreachable",
+      reason: safeNetworkCode(error)
+    } as const;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function porichoyRequest(path: string, payload: Record<string, unknown>) {
   const apiKey = process.env.PORICHOY_API_KEY?.trim();
   if (!apiKey) {
@@ -104,12 +171,13 @@ async function porichoyRequest(path: string, payload: Record<string, unknown>) {
     );
   }
 
+  const baseUrl = porichoyBaseUrl();
   const timeoutMs = Math.max(3000, Number(process.env.PORICHOY_TIMEOUT_MS || 15000));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${PORICHOY_BASE_URL}${path}`, {
+    const response = await fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -153,6 +221,13 @@ async function porichoyRequest(path: string, payload: Record<string, unknown>) {
           "UPSTREAM_RATE_LIMIT"
         );
       }
+      if (response.status >= 500) {
+        throw new PorichoyError(
+          "Porichoy is temporarily unavailable. Please try again later.",
+          503,
+          "PORICHOY_UPSTREAM_UNAVAILABLE"
+        );
+      }
       throw new PorichoyError(
         `Verification provider returned HTTP ${response.status}.`,
         502,
@@ -166,14 +241,36 @@ async function porichoyRequest(path: string, payload: Record<string, unknown>) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new PorichoyError("Verification provider timed out.", 504, "PORICHOY_TIMEOUT");
     }
-    throw new PorichoyError("Could not reach the verification provider.", 502, "PORICHOY_NETWORK_ERROR");
+
+    const code = safeNetworkCode(error);
+    console.error("[porichoy] upstream connection failed", {
+      host: new URL(baseUrl).host,
+      code
+    });
+
+    throw new PorichoyError(
+      "Porichoy verification service cannot be reached right now. Please try again later.",
+      503,
+      `PORICHOY_NETWORK_${code}`
+    );
   } finally {
     clearTimeout(timer);
   }
 }
 
 export function verifyNid(nidNumber: string, dateOfBirth: string) {
-  return porichoyRequest("/api/v2/verifications/autofill", {
+  const path = porichoyPath("PORICHOY_NID_PATH", DEFAULT_NID_PATH);
+
+  if (path.includes("/basic-nid")) {
+    return porichoyRequest(path, {
+      national_id: nidNumber,
+      person_dob: dateOfBirth,
+      team_tx_id: crypto.randomUUID(),
+      match_name: false
+    });
+  }
+
+  return porichoyRequest(path, {
     nidNumber,
     dateOfBirth,
     englishTranslation: true
@@ -181,7 +278,8 @@ export function verifyNid(nidNumber: string, dateOfBirth: string) {
 }
 
 export function verifyBirthRegistration(birthRegistrationNumber: string, dateOfBirth: string) {
-  return porichoyRequest("/api/v1/verifications/autofill", {
+  const path = porichoyPath("PORICHOY_BIRTH_PATH", DEFAULT_BIRTH_PATH);
+  return porichoyRequest(path, {
     birthRegistrationNumber,
     dateOfBirth
   });
