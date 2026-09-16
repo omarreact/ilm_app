@@ -8,6 +8,12 @@ type Health = {
   ok: boolean;
   porichoyConfigured: boolean;
   mode: "ready" | "setup-required";
+  providerNetwork?: {
+    reachable: boolean;
+    status: number | null;
+    state: "reachable" | "degraded" | "unreachable";
+    reason?: string;
+  };
 };
 
 type VerificationResponse = {
@@ -86,11 +92,18 @@ export default function Home() {
 
   const rows = useMemo(() => (response ? flatten(response.result) : []), [response]);
   const configured = health?.porichoyConfigured === true;
+  const providerReachable = health?.providerNetwork?.reachable === true;
+  const ready = configured && providerReachable;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
     setResponse(null);
+
+    if (!ready) {
+      setError("Porichoy verification service এখন পাওয়া যাচ্ছে না। কিছুক্ষণ পরে আবার চেষ্টা করুন।");
+      return;
+    }
 
     if (!consent) {
       setError("যাচাই করার আইনগত অনুমতি/সম্মতি নিশ্চিত করুন।");
@@ -119,6 +132,14 @@ export default function Home() {
     }
   }
 
+  const apiStatusText = health === null
+    ? "Checking API…"
+    : !configured
+      ? "API key required"
+      : providerReachable
+        ? "Official API ready"
+        : "Provider temporarily unavailable";
+
   return (
     <main className="shell">
       <header className="hero">
@@ -128,8 +149,8 @@ export default function Home() {
             <div className="eyebrow">BANGLADESH IDENTITY VERIFICATION</div>
             <h1>বাংলাদেশ পরিচয় যাচাই</h1>
           </div>
-          <span className={`statusPill ${configured ? "ready" : "setup"}`}>
-            {health === null ? "Checking API…" : configured ? "Official API ready" : "API key required"}
+          <span className={`statusPill ${ready ? "ready" : "setup"}`}>
+            {apiStatusText}
           </span>
         </div>
         <p className="heroText">
@@ -204,7 +225,14 @@ export default function Home() {
               </div>
             )}
 
-            <button className="primary" type="submit" disabled={loading || !configured}>
+            {configured && health && !providerReachable && (
+              <div className="setupBox" role="status">
+                <strong>Porichoy provider এখন network থেকে পাওয়া যাচ্ছে না।</strong>
+                <span>Credential configured আছে, কিন্তু upstream service/hostname unavailable। Service ফিরে এলে form স্বয়ংক্রিয়ভাবে আবার usable হবে।</span>
+              </div>
+            )}
+
+            <button className="primary" type="submit" disabled={loading || !ready}>
               {loading ? "যাচাই হচ্ছে…" : kind === "nid" ? "NID যাচাই করুন" : "জন্ম নিবন্ধন যাচাই করুন"}
             </button>
           </form>
