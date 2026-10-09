@@ -2,8 +2,6 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-type Kind = "nid" | "birth";
-
 type Health = {
   ok: boolean;
   porichoyConfigured: boolean;
@@ -29,7 +27,7 @@ type Health = {
 
 type VerificationResponse = {
   ok: boolean;
-  type: Kind;
+  type: "birth";
   provider?: string;
   maskedIdentifier: string;
   source: string;
@@ -37,7 +35,6 @@ type VerificationResponse = {
   result: unknown;
 };
 
-const OFFICIAL_NID = "https://services.nidw.gov.bd/nid-pub/";
 const OFFICIAL_BIRTH = "https://everify.bdris.gov.bd/";
 
 function labelFor(key: string) {
@@ -59,8 +56,6 @@ function labelFor(key: string) {
     place_of_birth: "জন্মস্থান",
     fatherName: "পিতার নাম",
     motherName: "মাতার নাম",
-    spouseName: "স্বামী/স্ত্রীর নাম",
-    nationality: "জাতীয়তা",
     status: "স্ট্যাটাস",
     verified: "যাচাইকৃত",
     message: "বার্তা"
@@ -87,8 +82,6 @@ function flatten(value: unknown, prefix = ""): Array<[string, string]> {
 }
 
 export default function Home() {
-  const [kind, setKind] = useState<Kind>("nid");
-  const [nid, setNid] = useState("");
   const [brn, setBrn] = useState("");
   const [dob, setDob] = useState("");
   const [consent, setConsent] = useState(false);
@@ -106,14 +99,10 @@ export default function Home() {
   const providerReachable = health?.providerNetwork?.reachable === true;
   const bdrisReachable = health?.bdris?.reachable === true;
   const birthMode = health?.birthVerification?.mode || (configured ? "porichoy" : "bdris");
-  const captchaRequired = kind === "birth" && birthMode === "bdris";
+  const captchaRequired = birthMode === "bdris";
 
   const ready =
-    kind === "nid"
-      ? configured && providerReachable
-      : birthMode === "porichoy"
-        ? configured && providerReachable
-        : bdrisReachable;
+    birthMode === "porichoy" ? configured && providerReachable : bdrisReachable;
 
   const fetchCaptcha = useCallback(async () => {
     setCaptchaLoading(true);
@@ -161,15 +150,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setError("");
-    setResponse(null);
-    setConsent(false);
-    setCaptchaAnswer("");
-    setSessionId(null);
-    setCaptchaImage(null);
-  }, [kind]);
-
-  useEffect(() => {
     if (captchaRequired && bdrisReachable) {
       void fetchCaptcha();
     }
@@ -184,7 +164,7 @@ export default function Home() {
 
     if (!ready) {
       setError(
-        kind === "birth" && birthMode === "bdris"
+        birthMode === "bdris"
           ? "BDRIS portal এখন পাওয়া যাচ্ছে না। কিছুক্ষণ পরে আবার চেষ্টা করুন।"
           : "Porichoy verification service এখন পাওয়া যাচ্ছে না। কিছুক্ষণ পরে আবার চেষ্টা করুন।"
       );
@@ -203,19 +183,16 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const body =
-        kind === "nid"
-          ? { nidNumber: nid.trim(), dateOfBirth: dob, consent: true }
-          : {
-              birthRegistrationNumber: brn.trim(),
-              dateOfBirth: dob,
-              consent: true,
-              ...(captchaRequired
-                ? { sessionId, captchaAnswer: captchaAnswer.trim(), provider: "bdris" }
-                : {})
-            };
+      const body = {
+        birthRegistrationNumber: brn.trim(),
+        dateOfBirth: dob,
+        consent: true,
+        ...(captchaRequired
+          ? { sessionId, captchaAnswer: captchaAnswer.trim(), provider: "bdris" }
+          : {})
+      };
 
-      const res = await fetch(`/api/verify/${kind}`, {
+      const res = await fetch("/api/verify/birth", {
         method: "POST",
         headers: { "content-type": "application/json" },
         cache: "no-store",
@@ -238,7 +215,7 @@ export default function Home() {
   const apiStatusText =
     health === null
       ? "Checking API…"
-      : kind === "birth" && birthMode === "bdris"
+      : birthMode === "bdris"
         ? bdrisReachable
           ? "BDRIS portal ready"
           : "BDRIS temporarily unavailable"
@@ -256,70 +233,39 @@ export default function Home() {
             ✓
           </div>
           <div>
-            <div className="eyebrow">BANGLADESH IDENTITY VERIFICATION</div>
-            <h1>বাংলাদেশ পরিচয় যাচাই</h1>
+            <div className="eyebrow">BIRTH CERTIFICATE VERIFICATION</div>
+            <h1>জন্ম নিবন্ধন যাচাই</h1>
           </div>
           <span className={`statusPill ${ready ? "ready" : "setup"}`}>{apiStatusText}</span>
         </div>
         <p className="heroText">
-          অনুমোদিত Porichoy integration এবং অফিসিয়াল BDRIS portal দিয়ে জাতীয় পরিচয়পত্র ও জন্ম নিবন্ধন
-          তথ্য যাচাই করুন। আপনার দেওয়া পরিচয় তথ্য এই অ্যাপ database-এ সংরক্ষণ করা হয় না।
+          অফিসিয়াল BDRIS portal (everify.bdris.gov.bd) এবং অনুমোদিত Porichoy integration দিয়ে জন্ম
+          নিবন্ধন তথ্য যাচাই করুন। আপনার দেওয়া পরিচয় তথ্য এই অ্যাপ database-এ সংরক্ষণ করা হয় না।
         </p>
       </header>
 
       <section className="grid">
         <div className="card verifyCard">
-          <div className="tabs" role="tablist" aria-label="Verification type">
-            <button
-              className={kind === "nid" ? "tab active" : "tab"}
-              onClick={() => setKind("nid")}
-              type="button"
-            >
-              জাতীয় পরিচয়পত্র
-              <small>NID Verification</small>
-            </button>
-            <button
-              className={kind === "birth" ? "tab active" : "tab"}
-              onClick={() => setKind("birth")}
-              type="button"
-            >
-              জন্ম নিবন্ধন
-              <small>Birth Certificate</small>
-            </button>
+          <div className="cardTitle">
+            <strong>জন্ম নিবন্ধন</strong>
+            <small>Birth Registration Number + Date of Birth</small>
           </div>
 
           <form onSubmit={submit} className="form">
-            {kind === "nid" ? (
-              <label>
-                <span>জাতীয় পরিচয়পত্র নম্বর</span>
-                <input
-                  value={nid}
-                  onChange={(e) => setNid(e.target.value.replace(/\D/g, "").slice(0, 17))}
-                  inputMode="numeric"
-                  autoComplete="off"
-                  placeholder="10 / 13 / 17 digit NID"
-                  minLength={10}
-                  maxLength={17}
-                  required
-                />
-                <small>শুধু নিজের বা যাচাই করার বৈধ অনুমতি আছে এমন NID ব্যবহার করুন।</small>
-              </label>
-            ) : (
-              <label>
-                <span>জন্ম নিবন্ধন নম্বর</span>
-                <input
-                  value={brn}
-                  onChange={(e) => setBrn(e.target.value.replace(/\D/g, "").slice(0, 17))}
-                  inputMode="numeric"
-                  autoComplete="off"
-                  placeholder="17 digit Birth Registration Number"
-                  minLength={17}
-                  maxLength={17}
-                  required
-                />
-                <small>BDRIS জন্ম নিবন্ধন নম্বর ১৭ অংকের হতে হবে।</small>
-              </label>
-            )}
+            <label>
+              <span>জন্ম নিবন্ধন নম্বর</span>
+              <input
+                value={brn}
+                onChange={(e) => setBrn(e.target.value.replace(/\D/g, "").slice(0, 17))}
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="17 digit Birth Registration Number"
+                minLength={17}
+                maxLength={17}
+                required
+              />
+              <small>BDRIS জন্ম নিবন্ধন নম্বর ১৭ অংকের হতে হবে।</small>
+            </label>
 
             <label>
               <span>জন্ম তারিখ</span>
@@ -357,7 +303,9 @@ export default function Home() {
                   required={captchaRequired}
                   disabled={loading || captchaLoading}
                 />
-                <small>অফিসিয়াল BDRIS portal-এর CAPTCHA। সমাধান ব্যবহারকারী করেন — bypass করা হয় না।</small>
+                <small>
+                  অফিসিয়াল BDRIS portal-এর CAPTCHA। সমাধান ব্যবহারকারী করেন — bypass করা হয় না।
+                </small>
               </div>
             )}
 
@@ -379,41 +327,27 @@ export default function Home() {
               </div>
             )}
 
-            {kind === "nid" && !configured && health && (
-              <div className="setupBox">
-                <strong>Porichoy production credential এখনো configured নয়।</strong>
-                <span>
-                  Vercel-এ <code>PORICHOY_API_KEY</code> যোগ করলে এই form real verification করবে।
-                </span>
-              </div>
-            )}
-
-            {kind === "birth" && birthMode === "bdris" && health && (
+            {birthMode === "bdris" && health && (
               <div className="setupBox" role="status">
                 <strong>Official BDRIS portal mode</strong>
                 <span>
-                  Porichoy key নেই — জন্ম নিবন্ধন যাচাই everify.bdris.gov.bd এর মাধ্যমে হচ্ছে (user-solved
-                  CAPTCHA)।
+                  জন্ম নিবন্ধন যাচাই everify.bdris.gov.bd এর মাধ্যমে হচ্ছে (user-solved CAPTCHA)।
                 </span>
               </div>
             )}
 
-            {configured && health && kind === "nid" && !providerReachable && (
+            {birthMode === "porichoy" && configured && health && !providerReachable && (
               <div className="setupBox" role="status">
                 <strong>Porichoy provider এখন network থেকে পাওয়া যাচ্ছে না।</strong>
                 <span>
-                  Credential configured আছে, কিন্তু upstream service/hostname unavailable। Service ফিরে
-                  এলে form স্বয়ংক্রিয়ভাবে আবার usable হবে।
+                  Credential configured আছে, কিন্তু upstream service unavailable। Service ফিরে এলে form
+                  স্বয়ংক্রিয়ভাবে আবার usable হবে।
                 </span>
               </div>
             )}
 
             <button className="primary" type="submit" disabled={loading || !ready}>
-              {loading
-                ? "যাচাই হচ্ছে…"
-                : kind === "nid"
-                  ? "NID যাচাই করুন"
-                  : "জন্ম নিবন্ধন যাচাই করুন"}
+              {loading ? "যাচাই হচ্ছে…" : "জন্ম নিবন্ধন যাচাই করুন"}
             </button>
           </form>
         </div>
@@ -421,21 +355,19 @@ export default function Home() {
         <aside className="card infoCard">
           <div className="infoIcon">🔐</div>
           <h2>Privacy-first verification</h2>
-          <p>API key শুধুমাত্র server-side environment variable-এ থাকে। Browser কখনও credential পায় না।</p>
+          <p>
+            Server-side verification only. Browser কখনও API credential পায় না। CAPTCHA bypass করা হয়
+            না।
+          </p>
           <ul>
             <li>Verification input database-এ save হয় না</li>
             <li>Response cache করা হয় না</li>
-            <li>Photo, signature, phone, email ও address response থেকে বাদ দেওয়া হয়</li>
-            <li>NID/BRN response-এ masked আকারে দেখানো হয়</li>
+            <li>BRN response-এ masked আকারে দেখানো হয়</li>
             <li>Basic abuse rate-limit enabled</li>
             <li>BDRIS CAPTCHA user-solved — no bypass</li>
           </ul>
 
           <div className="officialLinks">
-            <a href={OFFICIAL_NID} target="_blank" rel="noopener noreferrer">
-              <strong>বাংলাদেশ নির্বাচন কমিশন NID Portal</strong>
-              <span>services.nidw.gov.bd ↗</span>
-            </a>
             <a href={OFFICIAL_BIRTH} target="_blank" rel="noopener noreferrer">
               <strong>Official BDRIS Birth Verification</strong>
               <span>everify.bdris.gov.bd ↗</span>
@@ -457,7 +389,7 @@ export default function Home() {
           <div className="resultMeta">
             <div>
               <span>ধরন</span>
-              <strong>{response.type === "nid" ? "NID" : "Birth Registration"}</strong>
+              <strong>Birth Registration</strong>
             </div>
             <div>
               <span>আইডি</span>
@@ -491,9 +423,8 @@ export default function Home() {
       )}
 
       <section className="footnote">
-        <strong>Important:</strong> এই অ্যাপ Election Commission বা BDRIS-এর বিকল্প সরকারি ওয়েবসাইট নয়।
-        NID/BRN যাচাই কেবল অনুমোদিত ব্যবহারের জন্য। Official portal-এর CAPTCHA, login বা access control
-        bypass করা হয় না।
+        <strong>Important:</strong> এই অ্যাপ BDRIS-এর বিকল্প সরকারি ওয়েবসাইট নয়। জন্ম নিবন্ধন যাচাই কেবল
+        অনুমোদিত ব্যবহারের জন্য। Official portal-এর CAPTCHA বা access control bypass করা হয় না।
       </section>
     </main>
   );
