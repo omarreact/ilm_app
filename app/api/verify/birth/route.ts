@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkRateLimit, maskIdentifier, PorichoyError, verifyBirthRegistration } from "@/lib/porichoy";
+import {
+  checkRateLimit,
+  maskIdentifier,
+  PorichoyError,
+  porichoyConfigured,
+  verifyBirthRegistration
+} from "@/lib/porichoy";
+import { BdrisError, verifyBirthWithBdris } from "@/lib/bdris";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,9 +15,11 @@ const BRN_PATTERN = /^\d{17}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function clientKey(request: NextRequest) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    || request.headers.get("x-real-ip")
-    || "unknown";
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "unknown"
+  );
 }
 
 function noStore(body: unknown, init?: { status?: number; headers?: Record<string, string> }) {
@@ -43,29 +52,90 @@ export async function POST(request: NextRequest) {
   const birthRegistrationNumber = String(body.birthRegistrationNumber || "").trim();
   const dateOfBirth = String(body.dateOfBirth || "").trim();
   const consent = body.consent === true;
+  const captchaAnswer = String(body.captchaAnswer || body.captcha_answer || "").trim();
+  const sessionId = String(body.sessionId || body.session_id || "").trim();
+  const preferBdris = body.provider === "bdris" || body.useBdris === true;
 
   if (!consent) {
     return noStore({ ok: false, error: "Lawful authorization or consent is required." }, { status: 400 });
   }
   if (!BRN_PATTERN.test(birthRegistrationNumber)) {
-    return noStore({ ok: false, error: "Birth Registration Number must be exactly 17 digits." }, { status: 400 });
+    return noStore(
+      { ok: false, error: "Birth Registration Number must be exactly 17 digits." },
+      { status: 400 }
+    );
   }
   if (!DATE_PATTERN.test(dateOfBirth) || Number.isNaN(Date.parse(`${dateOfBirth}T00:00:00Z`))) {
-    return noStore({ ok: false, error: "Date of birth must be a valid YYYY-MM-DD date." }, { status: 400 });
+    return noStore(
+      { ok: false, error: "Date of birth must be a valid YYYY-MM-DD date." },
+      { status: 400 }
+    );
   }
 
+  const usePorichoy = porichoyConfigured() && !preferBdris;
+
   try {
-    const result = await verifyBirthRegistration(birthRegistrationNumber, dateOfBirth);
+    if (usePorichoy) {
+      const result = await verifyBirthRegistration(birthRegistrationNumber, dateOfBirth);
+      return noStore({
+        ok: true,
+        type: "birth",
+        provider: "porichoy",
+        maskedIdentifier: maskIdentifier(birthRegistrationNumber),
+        source: "Porichoy authorized verification API",
+        checkedAt: new Date().toISOString(),
+        result
+      });
+    }
+
+    if (!sessionId || !captchaAnswer) {
+      return noStore(
+        {
+          ok: false,
+          code: "CAPTCHA_REQUIRED",
+          error:
+            "Official BDRIS verification requires a CAPTCHA. Fetch /api/captcha/bdris first, then submit sessionId and captchaAnswer."
+        },
+        { status: 400 }
+      );
+    }
+
+    const result = await verifyBirthWithBdris(
+      birthRegistrationNumber,
+      dateOfBirth,
+      captchaAnswer,
+      sessionId
+    );
+
+    if (result.status === "not_found") {
+      return noStore(
+        {
+          ok: false,
+          type: "birth",
+          provider: "bdris",
+          code: "RECORD_NOT_FOUND",
+          error: result.message,
+          source: result.source,
+          checkedAt: new Date().toISOString()
+        },
+        { status: 404 }
+      );
+    }
+
     return noStore({
       ok: true,
       type: "birth",
+      provider: "bdris",
       maskedIdentifier: maskIdentifier(birthRegistrationNumber),
-      source: "Porichoy authorized verification API",
+      source: result.source,
       checkedAt: new Date().toISOString(),
-      result
+      result: result.data
     });
   } catch (error: unknown) {
     if (error instanceof PorichoyError) {
+      return noStore({ ok: false, code: error.code, error: error.message }, { status: error.status });
+    }
+    if (error instanceof BdrisError) {
       return noStore({ ok: false, code: error.code, error: error.message }, { status: error.status });
     }
     return noStore({ ok: false, error: "Unexpected verification error." }, { status: 500 });
