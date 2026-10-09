@@ -1,5 +1,9 @@
 # Provenance
 
-Research baseline derived from the user's 2026-09-15 enriched export and the public-source review performed in this conversation.
+Birth certificate verification integration is based on:
 
-Imported simulator observations are not promoted into production evidence. The live scanner records only metadata/signals extracted from passive public GET requests and never stores raw HTML.
+- Official portal: [everify.bdris.gov.bd](https://everify.bdris.gov.bd/) (Office of the Registrar General, Birth and Death Registration)
+- HAR analysis and research notes (ILM project, October 2026)
+- Public form flow: CSRF token + CAPTCHA + UBRN + DOB multipart POST
+
+The app does **not** bypass CAPTCHA or store verification inputs. Optional Porichoy path requires an authorized organization API key.
