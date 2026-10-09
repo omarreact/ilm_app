@@ -1,5 +1,4 @@
 const DEFAULT_PORICHOY_BASE_URL = "https://api.porichoybd.com";
-const DEFAULT_NID_PATH = "/api/v2/verifications/autofill";
 const DEFAULT_BIRTH_PATH = "/api/v1/verifications/autofill";
 
 export class PorichoyError extends Error {
@@ -38,7 +37,7 @@ function porichoyBaseUrl() {
   return url.toString().replace(/\/$/, "");
 }
 
-function porichoyPath(name: "PORICHOY_NID_PATH" | "PORICHOY_BIRTH_PATH", fallback: string) {
+function porichoyPath(name: "PORICHOY_BIRTH_PATH", fallback: string) {
   const value = envValue(name, fallback);
   return value.startsWith("/") ? value : `/${value}`;
 }
@@ -83,7 +82,8 @@ export function checkRateLimit(key: string) {
   return { allowed: true, remaining: Math.max(0, limit - existing.count), retryAfterSeconds: 0 };
 }
 
-const OMIT_KEY = /(photo|image|signature|finger|phone|mobile|email|address|token|api.?key|secret|password|face|biometric|blood|spouse|parent|voter|permanent|present)/i;
+const OMIT_KEY =
+  /(photo|image|signature|finger|phone|mobile|email|address|token|api.?key|secret|password|face|biometric|blood|spouse|parent|voter|permanent|present)/i;
 const IDENTIFIER_KEY = /(nid|national.?id|birth.?registration|birth.?reg|brn)/i;
 
 function sanitize(value: unknown, key = "", depth = 0): unknown {
@@ -256,25 +256,6 @@ async function porichoyRequest(path: string, payload: Record<string, unknown>) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-export function verifyNid(nidNumber: string, dateOfBirth: string) {
-  const path = porichoyPath("PORICHOY_NID_PATH", DEFAULT_NID_PATH);
-
-  if (path.includes("/basic-nid")) {
-    return porichoyRequest(path, {
-      national_id: nidNumber,
-      person_dob: dateOfBirth,
-      team_tx_id: crypto.randomUUID(),
-      match_name: false
-    });
-  }
-
-  return porichoyRequest(path, {
-    nidNumber,
-    dateOfBirth,
-    englishTranslation: true
-  });
 }
 
 export function verifyBirthRegistration(birthRegistrationNumber: string, dateOfBirth: string) {
