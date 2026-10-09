@@ -1,51 +1,84 @@
-# Digital Seba Public Intelligence Monitor
+# জন্ম নিবন্ধন যাচাই | Birth Certificate Verification
 
-Production-oriented public-source monitoring dashboard for researched Bangladesh digital service portals.
+Privacy-first Bangladesh **birth registration** verification for the ILM project.
 
-## Safety model
+Uses the official BDRIS portal ([everify.bdris.gov.bd](https://everify.bdris.gov.bd/)) with **user-solved CAPTCHA** (no bypass). Optionally uses authorized Porichoy API when `PORICHOY_API_KEY` is configured.
 
-- Static registry only; no arbitrary URL scanning.
-- Public `GET` requests only.
-- No login automation or credential submission.
-- No NID, phone, DOB, payment-reference, or other personal-data submission.
-- Redirects are revalidated against the hostname allowlist.
-- DNS targets resolving to private/reserved IP ranges are blocked.
-- Response size and timeout limits are enforced.
-- Raw HTML is not stored.
-- Website claims are shown separately from corroborated research.
+## Features
+
+- 17-digit UBRN + date of birth validation
+- Official BDRIS form submit + HTML result parsing
+- CAPTCHA proxy (`GET /api/captcha/bdris`) — user solves, server never bypasses
+- Optional Porichoy birth path when API key is present
+- Rate limiting, masked identifiers, no input storage
+- Consent required before verification
 
 ## Stack
 
-Next.js 16.3.3, React 19, TypeScript, optional PostgreSQL persistence via `postgres`, and Cheerio for public HTML parsing.
+Next.js 16, React 19, TypeScript (Node.js ≥ 22).
 
-## Production mode
+## Environment
 
-The app works immediately in stateless mode. For persistent history and scheduled scans, configure:
-
-```env
-DATABASE_URL=postgresql://...
-CRON_SECRET=<long-random-secret>
-```
-
-Then run `npm run db:init` once against the database.
-
-Optional scan controls:
+Copy `.env.example`:
 
 ```env
-SCAN_MIN_INTERVAL_SECONDS=900
-SCAN_TIMEOUT_MS=12000
-SCAN_MAX_BYTES=1500000
-SCAN_MAX_REDIRECTS=5
+# Optional — preferred when set
+PORICHOY_API_KEY=
+PORICHOY_BASE_URL=https://api.porichoybd.com
+PORICHOY_BIRTH_PATH=/api/v1/verifications/autofill
+PORICHOY_TIMEOUT_MS=15000
+
+# Official BDRIS (default path when no Porichoy key)
+BDRIS_BASE_URL=https://everify.bdris.gov.bd
+BDRIS_TIMEOUT_MS=20000
+
+VERIFY_RATE_LIMIT=6
+VERIFY_RATE_WINDOW_MS=300000
 ```
 
-## Endpoints
+## API
 
-- `GET /api/health`
-- `GET /api/portals`
-- `POST /api/scan` with `{ "id": "nidmaker" }`
-- `GET /api/export`
-- `GET /api/cron/scan` protected by `CRON_SECRET`
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Health + BDRIS/Porichoy reachability |
+| `GET` | `/api/captcha/bdris` | CAPTCHA image + `sessionId` |
+| `POST` | `/api/verify/birth` | Verify birth registration |
 
-## Interpretation
+### Verify request (BDRIS mode)
 
-A network failure is not proof that a site is offline. Likewise, a site advertising a sensitive capability does not prove that the capability works or that the operator has authorized access to any government system.
+```json
+{
+  "birthRegistrationNumber": "20082692543019571",
+  "dateOfBirth": "2008-01-10",
+  "consent": true,
+  "sessionId": "<from captcha endpoint>",
+  "captchaAnswer": "27",
+  "provider": "bdris"
+}
+```
+
+### Verify request (Porichoy mode)
+
+When `PORICHOY_API_KEY` is set, CAPTCHA fields are not required:
+
+```json
+{
+  "birthRegistrationNumber": "20082692543019571",
+  "dateOfBirth": "2008-01-10",
+  "consent": true
+}
+```
+
+## Local development
+
+```bash
+npm install
+npm run dev
+```
+
+## Safety
+
+- Not an official government website
+- Does not bypass CAPTCHA, login, or access controls
+- Does not store UBRN/DOB in a database
+- Server-side credentials only (no `NEXT_PUBLIC_` secrets)
