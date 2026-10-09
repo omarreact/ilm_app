@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "বাংলাদেশ পরিচয় যাচাই | NID & Birth Verification",
-  description: "Authorized Bangladesh NID and birth registration verification using Porichoy, with official BDRIS and NID portal fallbacks.",
+  title: "জন্ম নিবন্ধন যাচাই | Birth Certificate Verification",
+  description:
+    "Bangladesh birth registration verification via official BDRIS (everify.bdris.gov.bd) and optional Porichoy integration.",
   robots: { index: false, follow: false }
 };
 
