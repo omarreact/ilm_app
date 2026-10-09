@@ -1,6 +1,6 @@
 {
-  "name": "bangladesh-identity-verification",
-  "version": "1.0.0",
+  "name": "birth-certificate-verification",
+  "version": "1.1.0",
   "private": true,
   "engines": {
     "node": ">=22.0.0"
